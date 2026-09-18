@@ -1,0 +1,22 @@
+services:
+  master:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: master-node
+    environment:
+      - NODE_ROLE=master
+    # ports:
+    #   - "8080:8080"  # Uncomment later if the master needs an external API port
+
+  worker:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: worker-node
+    environment:
+      - NODE_ROLE=worker
+    depends_on:
+      - master  # Ensures the master starts before the worker
+    # deploy:
+    #   replicas: 2  # Uncomment later if you want to scale up multiple workers
