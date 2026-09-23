@@ -1,17 +1,17 @@
-# Use Alpine Linux for the smallest possible footprint
-FROM alpine:latest
-
-# Install basic utilities (useful for debugging inside the node later)
-RUN apk add --no-cache bash curl
+FROM python:3.11-slim
 
 # Set the working directory inside the container
 WORKDIR /app
 
-# (Optional) Copy your application code here later
-# COPY . .
+# Copy dependency list and install (create a requirements.txt in your repo)
+COPY requirements.txt .
+RUN pip install --no-cache-dir -r requirements.txt
+
+# Copy your application code
+COPY . .
 
 # Set a default environment variable for the node role
 ENV NODE_ROLE=unassigned
 
-# The command keeps the container alive and prints its role
-CMD ["sh", "-c", "echo \"Starting $NODE_ROLE node...\" && tail -f /dev/null"]
+# Execute the application
+CMD ["python", "app.py"]
