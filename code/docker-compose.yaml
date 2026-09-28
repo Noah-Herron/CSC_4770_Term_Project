@@ -21,10 +21,10 @@ services:
       - MASTER_HOST=master
       - MASTER_PORT=6000
     depends_on:
-      - master  # Ensures the master starts before the worker
+      - master  # Waits for the master to start before the worker
     deploy:
       mode: replicated
-      replicas: 3  # Scales up multiple workers for parallel processing
+      replicas: 3  # Multiple workers
     networks:
       - matrix-net
 

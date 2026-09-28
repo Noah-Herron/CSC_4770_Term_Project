@@ -56,7 +56,7 @@ def poll_for_result(request_id):
             time.sleep(2) # Wait 2 seconds before checking again
 
 if __name__ == "__main__":
-    # Start with the 100x100 development requirement
+    # Starting with the 100x100
     matrix_size = 100 
     
     req_id = generate_and_send(matrix_size)

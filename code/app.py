@@ -15,7 +15,7 @@ job_queue = queue.Queue()
 # In-memory database to track multiplication requests and their aggregated results
 tasks_db = {} 
 
-# --- SOCKET BUFFER LOOP UTILITIES ---
+# SOCKET BUFFER LOOP UTILITIES
 def send_msg(sock, msg):
     msg_bytes = msg.encode('utf-8')
     sock.sendall(struct.pack('>I', len(msg_bytes)) + msg_bytes)
@@ -39,7 +39,7 @@ def recv_msg(sock):
         return None
     return msg_bytes.decode('utf-8')
 
-# --- FLASK API (INPUT & AGGREGATION MICROSERVICE) ---
+# FLASK API (INPUT & AGGREGATION MICROSERVICE)
 @app.route('/multiply', methods=['POST'])
 def receive_matrices():
     data = request.get_json()
@@ -104,7 +104,7 @@ def get_result(request_id):
             "progress": f"{len(task['results'])}/{task['total_jobs']} jobs completed."
         }), 202
 
-# --- TCP SERVER (MASTER DISPATCHER & AGGREGATOR) ---
+# TCP SERVER (MASTER DISPATCHER & AGGREGATOR)
 def run_tcp_server():
     host = '0.0.0.0'
     port = 6000
@@ -132,7 +132,7 @@ def run_tcp_server():
                         print(f"Master received Job {result['job_id']} for Request {req_id}", flush=True)
                         tasks_db[req_id]["results"].append(result)
                         
-                        # --- AGGREGATION LOGIC ---
+                        # AGGREGATION LOGIC
                         if len(tasks_db[req_id]["results"]) == tasks_db[req_id]["total_jobs"]:
                             print(f"All jobs finished for {req_id}. Aggregating...", flush=True)
                             
@@ -157,7 +157,7 @@ def run_master():
     tcp_thread.start()
     app.run(host='0.0.0.0', port=5000, use_reloader=False) 
 
-# --- WORKER COMPUTATION ---
+# WORKER COMPUTATION
 def run_worker():
     time.sleep(3)
     master_host = os.environ.get('MASTER_HOST', 'master')
