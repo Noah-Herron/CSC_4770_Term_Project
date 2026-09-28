@@ -11,7 +11,7 @@ def generate_and_send(size):
     print(f"Generating two {size}x{size} matrices...")
     
     # Generate random integers between 1 and 10
-    # matrix_A = np.random.randint(1, 10, size=(size, size))
+    matrix_A = np.random.randint(1, 10, size=(size, size))
     matrix_B = np.random.randint(1, 10, size=(size, size))
 
     # Generate two simple 3x3 matrices
