@@ -11,8 +11,21 @@ def generate_and_send(size):
     print(f"Generating two {size}x{size} matrices...")
     
     # Generate random integers between 1 and 10
-    matrix_A = np.random.randint(1, 10, size=(size, size))
+    # matrix_A = np.random.randint(1, 10, size=(size, size))
     matrix_B = np.random.randint(1, 10, size=(size, size))
+
+    # Generate two simple 3x3 matrices
+    # matrix_A = np.array([
+    #     [1, 2, 3],
+    #     [4, 5, 6],
+    #     [7, 8, 9]
+    # ])
+    
+    # matrix_B = np.array([
+    #     [9, 8, 7],
+    #     [6, 5, 4],
+    #     [3, 2, 1]
+    # ])
     
     print("Converting to JSON payload and uploading to master node...")
     payload = {
@@ -57,7 +70,7 @@ def poll_for_result(request_id):
 
 if __name__ == "__main__":
     # Starting with the 100x100
-    matrix_size = 100 
+    matrix_size = 3 
     
     req_id = generate_and_send(matrix_size)
     if req_id:
