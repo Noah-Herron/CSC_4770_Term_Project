@@ -1,0 +1,33 @@
+services:
+  master:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: master-node
+    environment:
+      - NODE_ROLE=master
+    ports:
+      - "5000:5000"  # External API port for user uploads
+      - "6000:6000"  # Internal TCP socket port for worker communication
+    networks:
+      - matrix-net
+
+  worker:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    environment:
+      - NODE_ROLE=worker
+      - MASTER_HOST=master
+      - MASTER_PORT=6000
+    depends_on:
+      - master  # Waits for the master to start before the worker
+    deploy:
+      mode: replicated
+      replicas: 3  # Multiple workers
+    networks:
+      - matrix-net
+
+networks:
+  matrix-net:
+    driver: bridge
