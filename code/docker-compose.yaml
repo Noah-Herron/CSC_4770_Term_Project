@@ -24,7 +24,7 @@ services:
       - master  # Waits for the master to start before the worker
     deploy:
       mode: replicated
-      replicas: 3  # Multiple workers
+      replicas: 16  # All 16 run; each test only uses num_workers of them
     networks:
       - matrix-net
 

@@ -1,77 +1,86 @@
+import argparse
+import json
+import sys
+import time
+
 import numpy as np
 import requests
-import time
-import sys
 
-# Master node API endpoints
-MULTIPLY_URL = "http://localhost:5000/multiply"
-RESULT_URL = "http://localhost:5000/result/"
 
-def generate_and_send(size):
-    print(f"Generating two {size}x{size} matrices...")
-    
-    # Generate random integers between 1 and 10
-    matrix_A = np.random.randint(1, 10, size=(size, size))
-    matrix_B = np.random.randint(1, 10, size=(size, size))
+def generate_and_send(base_url, a_rows, a_cols, b_cols, num_workers, seed):
+    print(f"Generating A ({a_rows}x{a_cols}) and B ({a_cols}x{b_cols}) with seed {seed}...")
+    rng = np.random.default_rng(seed)
 
-    # Generate two simple 3x3 matrices
-    # matrix_A = np.array([
-    #     [1, 2, 3],
-    #     [4, 5, 6],
-    #     [7, 8, 9]
-    # ])
-    
-    # matrix_B = np.array([
-    #     [9, 8, 7],
-    #     [6, 5, 4],
-    #     [3, 2, 1]
-    # ])
-    
-    print("Converting to JSON payload and uploading to master node...")
+    # Random integers between 1 and 10
+    matrix_A = rng.integers(1, 10, size=(a_rows, a_cols))
+    matrix_B = rng.integers(1, 10, size=(a_cols, b_cols))
+
+    print(f"Uploading to master node (using {num_workers} workers)...")
     payload = {
         "matrix_A": matrix_A.tolist(),
-        "matrix_B": matrix_B.tolist()
+        "matrix_B": matrix_B.tolist(),
+        "num_workers": num_workers,
     }
-    
-    # Send the matrices to the master node
+
     try:
-        response = requests.post(MULTIPLY_URL, json=payload)
+        response = requests.post(f"{base_url}/multiply", json=payload)
         response.raise_for_status()
         data = response.json()
-        
-        request_id = data['request_id']
-        print(f"Upload successful! Request ID: {request_id}")
-        print(f"Server message: {data['message']}")
-        
-        return request_id
     except requests.exceptions.RequestException as e:
         print(f"Failed to connect to the Master API: {e}")
         sys.exit(1)
 
-def poll_for_result(request_id):
-    print("\nPolling for results...")
+    print(f"Upload successful! Request ID: {data['request_id']}")
+    print(f"Server message: {data['message']}")
+    return data["request_id"]
+
+
+def poll_for_result(base_url, request_id, poll_interval):
+    print("Polling for results...")
     start_time = time.time()
-    
+
     while True:
-        response = requests.get(RESULT_URL + request_id)
+        response = requests.get(f"{base_url}/result/{request_id}")
         data = response.json()
-        
-        if data.get('status') == 'completed':
+
+        if data.get("status") == "completed":
             elapsed = time.time() - start_time
-            # Reconstruct the NumPy array from the result list to verify dimensions
-            final_matrix = np.array(data['final_matrix'])
-            print(f"\n--- SUCCESS ---")
+            final_matrix = np.array(data["final_matrix"])
+            print("--- SUCCESS ---")
             print(f"Time elapsed: {elapsed:.2f} seconds")
             print(f"Final Matrix Shape: {final_matrix.shape}")
-            break
-        else:
-            print(f"Status: {data.get('progress', 'Processing...')}")
-            time.sleep(2) # Wait 2 seconds before checking again
+            return elapsed, list(final_matrix.shape), data.get("workers_used", [])
+
+        print(f"Status: {data.get('progress', 'Processing...')}")
+        time.sleep(poll_interval)
+
+
+def main():
+    parser = argparse.ArgumentParser(description="Send A @ B to the master node and time it")
+    parser.add_argument("--a-rows", type=int, default=3, help="Rows of A (x1)")
+    parser.add_argument("--a-cols", type=int, default=3, help="Columns of A = rows of B (y1 = x2)")
+    parser.add_argument("--b-cols", type=int, default=3, help="Columns of B (y2)")
+    parser.add_argument("--workers", type=int, default=2, help="How many worker containers to use")
+    parser.add_argument("--seed", type=int, default=42)
+    parser.add_argument("--host", default="http://localhost:5000")
+    parser.add_argument("--poll-interval", type=float, default=0.5)
+    args = parser.parse_args()
+
+    upload_start = time.time()
+    req_id = generate_and_send(args.host, args.a_rows, args.a_cols, args.b_cols, args.workers, args.seed)
+    upload_seconds = time.time() - upload_start
+
+    compute_seconds, shape, workers_used = poll_for_result(args.host, req_id, args.poll_interval)
+
+    # Machine-readable last line for experiment_handler.py
+    print("RESULT_JSON " + json.dumps({
+        "request_id": req_id,
+        "upload_seconds": upload_seconds,
+        "compute_seconds": compute_seconds,
+        "result_shape": shape,
+        "workers_used": workers_used,
+    }))
+
 
 if __name__ == "__main__":
-    # Starting with the 100x100
-    matrix_size = 3 
-    
-    req_id = generate_and_send(matrix_size)
-    if req_id:
-        poll_for_result(req_id)
+    main()
