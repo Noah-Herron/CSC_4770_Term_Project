@@ -24,7 +24,7 @@ services:
       - master  # Waits for the master to start before the worker
     deploy:
       mode: replicated
-      replicas: 3  # Multiple workers
+      replicas: 4  # Four workers for SUMMA's fixed 2x2 grid
     networks:
       - matrix-net
 
