@@ -1,77 +1,72 @@
+import argparse
+import time
+
 import numpy as np
 import requests
-import time
-import sys
 
-# Master node API endpoints
 MULTIPLY_URL = "http://localhost:5000/multiply"
 RESULT_URL = "http://localhost:5000/result/"
 
-def generate_and_send(size):
-    print(f"Generating two {size}x{size} matrices...")
-    
-    # Generate random integers between 1 and 10
-    matrix_A = np.random.randint(1, 10, size=(size, size))
-    matrix_B = np.random.randint(1, 10, size=(size, size))
 
-    # Generate two simple 3x3 matrices
-    # matrix_A = np.array([
-    #     [1, 2, 3],
-    #     [4, 5, 6],
-    #     [7, 8, 9]
-    # ])
-    
-    # matrix_B = np.array([
-    #     [9, 8, 7],
-    #     [6, 5, 4],
-    #     [3, 2, 1]
-    # ])
-    
-    print("Converting to JSON payload and uploading to master node...")
-    payload = {
-        "matrix_A": matrix_A.tolist(),
-        "matrix_B": matrix_B.tolist()
-    }
-    
-    # Send the matrices to the master node
-    try:
-        response = requests.post(MULTIPLY_URL, json=payload)
+def generate_and_send(size, algorithm):
+    print(f"Generating two {size}x{size} matrices...")
+    rng = np.random.default_rng(0)  # Same input for both algorithm commands.
+    A = rng.integers(1, 10, size=(size, size))
+    B = rng.integers(1, 10, size=(size, size))
+    response = requests.post(MULTIPLY_URL, json={
+        "matrix_A": A.tolist(), "matrix_B": B.tolist(), "algorithm": algorithm,
+    })
+    response.raise_for_status()
+    data = response.json()
+    print(data["message"])
+    return data["request_id"], A, B
+
+
+def wait_for_result(request_id):
+    print("Waiting for results...")
+    started = time.perf_counter()
+    while True:
+        response = requests.get(RESULT_URL + request_id, params={"wait": "1"})
         response.raise_for_status()
         data = response.json()
-        
-        request_id = data['request_id']
-        print(f"Upload successful! Request ID: {request_id}")
-        print(f"Server message: {data['message']}")
-        
-        return request_id
-    except requests.exceptions.RequestException as e:
-        print(f"Failed to connect to the Master API: {e}")
-        sys.exit(1)
-
-def poll_for_result(request_id):
-    print("\nPolling for results...")
-    start_time = time.time()
-    
-    while True:
-        response = requests.get(RESULT_URL + request_id)
-        data = response.json()
-        
-        if data.get('status') == 'completed':
-            elapsed = time.time() - start_time
-            # Reconstruct the NumPy array from the result list to verify dimensions
-            final_matrix = np.array(data['final_matrix'])
-            print(f"\n--- SUCCESS ---")
-            print(f"Time elapsed: {elapsed:.2f} seconds")
-            print(f"Final Matrix Shape: {final_matrix.shape}")
+        if data.get("status") == "failed":
+            raise RuntimeError(data.get("error", "Multiplication failed."))
+        if data.get("status") == "completed":
+            if data.get("final_matrix") is None:
+                raise RuntimeError("Master reported completion without a matrix. Rebuild the containers.")
             break
-        else:
-            print(f"Status: {data.get('progress', 'Processing...')}")
-            time.sleep(2) # Wait 2 seconds before checking again
+        if data.get("status") not in ("queued", "processing"):
+            raise RuntimeError("Unexpected result response from master.")
+        time.sleep(0.05)
+    result = np.asarray(data["final_matrix"])
+    if "server_seconds" in data:
+        print(f"Server time: {data['server_seconds']:.4f} seconds")
+    else:
+        print("Server time unavailable; rebuild the containers to enable timing.")
+    print(f"Wait and download time: {time.perf_counter() - started:.4f} seconds")
+    print(f"Final matrix shape: {result.shape}")
+    return result
+
+
+def main():
+    parser = argparse.ArgumentParser(description="Distributed matrix multiplication")
+    parser.add_argument("--algorithm", required=True, choices=("baseline", "summa"))
+    parser.add_argument("--size", type=int, default=100)
+    parser.add_argument("--verify", action="store_true")
+    args = parser.parse_args()
+    if args.size <= 0:
+        parser.error("--size must be positive")
+    try:
+        request_id, A, B = generate_and_send(args.size, args.algorithm)
+        result = wait_for_result(request_id)
+        if args.verify:
+            expected = A.astype(np.float64) @ B
+            if result.shape != expected.shape or not np.allclose(result, expected, rtol=1e-10, atol=1e-10):
+                raise RuntimeError("NumPy verification failed.")
+            print("NumPy verification passed.")
+    except (requests.RequestException, RuntimeError) as error:
+        parser.exit(1, f"Failed: {error}\n")
+
 
 if __name__ == "__main__":
-    # Starting with the 100x100
-    matrix_size = 3 
-    
-    req_id = generate_and_send(matrix_size)
-    if req_id:
-        poll_for_result(req_id)
+    main()

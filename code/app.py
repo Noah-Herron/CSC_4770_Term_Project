@@ -1,201 +1,163 @@
-import socket
 import os
-import time
-import threading
 import queue
-import json
-import struct
+import socket
+import threading
+import time
 import uuid
+
 import numpy as np
-from flask import Flask, request, jsonify
+from flask import Flask, jsonify, request
+
+from protocol import SOCKET_TIMEOUT, collect_workers, recv_msg, send_msg
+from summa import get_grid_dims, run_summa_master, run_summa_worker
 
 app = Flask(__name__)
 job_queue = queue.Queue()
+tasks_db = {}
 
-# In-memory database to track multiplication requests and their aggregated results
-tasks_db = {} 
 
-# SOCKET BUFFER LOOP UTILITIES
-def send_msg(sock, msg):
-    msg_bytes = msg.encode('utf-8')
-    sock.sendall(struct.pack('>I', len(msg_bytes)) + msg_bytes)
-
-def recvall(sock, n):
-    data = bytearray()
-    while len(data) < n:
-        packet = sock.recv(n - len(data))
-        if not packet:
-            return None
-        data.extend(packet)
-    return data
-
-def recv_msg(sock):
-    raw_msglen = recvall(sock, 4)
-    if not raw_msglen:
-        return None
-    msglen = struct.unpack('>I', raw_msglen)[0]
-    msg_bytes = recvall(sock, msglen)
-    if msg_bytes is None:
-        return None
-    return msg_bytes.decode('utf-8')
-
-# FLASK API (INPUT & AGGREGATION MICROSERVICE)
-@app.route('/multiply', methods=['POST'])
+@app.post("/multiply")
 def receive_matrices():
-    data = request.get_json()
-    if not data or 'matrix_A' not in data or 'matrix_B' not in data:
-        return jsonify({"error": "Please provide matrix_A and matrix_B."}), 400
-    
-    A = np.array(data['matrix_A'])
-    B = np.array(data['matrix_B'])
-    
-    if A.shape[1] != B.shape[0]:
-        return jsonify({"error": f"Incompatible dimensions."}), 400
-    
-    request_id = str(uuid.uuid4())
-    chunk_size = 2 # Lowered to 2 so a 3x3 matrix forces multiple jobs for testing
-    total_rows = A.shape[0]
-    
-    # Calculate how many jobs this matrix will generate
-    job_count = len(range(0, total_rows, chunk_size))
-    
-    # Initialize the aggregation tracking state
-    tasks_db[request_id] = {
-        "total_jobs": job_count,
-        "results": [],
-        "status": "processing",
-        "final_matrix": None
-    }
-    
-    job_id = 0
-    for start_row in range(0, total_rows, chunk_size):
-        end_row = min(start_row + chunk_size, total_rows)
-        A_chunk = A[start_row:end_row].tolist()
-        
-        job = {
-            "request_id": request_id,
-            "job_id": job_id,
-            "start_row": start_row,
-            "A_chunk": A_chunk,
-            "B_matrix": B.tolist() 
-        }
-        job_queue.put(job)
-        job_id += 1
-        
-    return jsonify({
-        "message": f"Matrices divided into {job_count} jobs.",
-        "request_id": request_id
-    }), 202
+    data = request.get_json(silent=True)
+    try:
+        A = np.asarray(data["matrix_A"], dtype=np.float64)
+        B = np.asarray(data["matrix_B"], dtype=np.float64)
+        if A.ndim != 2 or B.ndim != 2 or 0 in A.shape or 0 in B.shape:
+            raise ValueError("Matrices must be nonempty 2D arrays.")
+        if A.shape[1] != B.shape[0]:
+            raise ValueError("Incompatible matrix dimensions.")
+        if not np.isfinite(A).all() or not np.isfinite(B).all():
+            raise ValueError("Matrices must contain finite numbers.")
+        algorithm = data.get("algorithm", "baseline")
+        if algorithm not in ("baseline", "summa"):
+            raise ValueError("algorithm must be baseline or summa.")
+    except (KeyError, TypeError, ValueError) as error:
+        return jsonify(error=str(error)), 400
 
-@app.route('/result/<request_id>', methods=['GET'])
+    request_id = str(uuid.uuid4())
+    job_count = (A.shape[0] + 1) // 2 if algorithm == "baseline" else 1
+    tasks_db[request_id] = {
+        "total_jobs": job_count, "results": [],
+        "status": "processing", "final_matrix": None,
+    }
+    job_queue.put({"request_id": request_id, "algorithm": algorithm, "A": A, "B": B})
+    return jsonify(request_id=request_id, message=f"Created {job_count} {algorithm} job(s)."), 202
+
+
+@app.get("/result/<request_id>")
 def get_result(request_id):
     task = tasks_db.get(request_id)
-    if not task:
-        return jsonify({"error": "Request ID not found."}), 404
-        
+    if task is None:
+        return jsonify(error="Request ID not found."), 404
+    # The client can wait for completion instead of measuring polling delays.
+    if request.args.get("wait") == "1":
+        while task["status"] == "processing":
+            time.sleep(0.01)
     if task["status"] == "completed":
-        return jsonify({
-            "status": "completed",
-            "final_matrix": task["final_matrix"]
-        }), 200
-    else:
-        return jsonify({
-            "status": "processing",
-            "progress": f"{len(task['results'])}/{task['total_jobs']} jobs completed."
-        }), 202
+        return jsonify(status="completed", final_matrix=task["final_matrix"],
+                       server_seconds=task["server_seconds"])
+    if task["status"] == "failed":
+        return jsonify(status="failed", error=task["error"])
+    return jsonify(status="processing", progress=f"{len(task['results'])}/{task['total_jobs']} jobs completed."), 202
 
-# TCP SERVER (MASTER DISPATCHER & AGGREGATOR)
+
+def run_baseline_master(connections, A, B, task):
+    """Send a batch first, then collect it. Worker processes compute in parallel."""
+    B_matrix = B.tolist()
+    chunk_size = 2
+    batch_size = chunk_size * len(connections)
+    for batch_start in range(0, A.shape[0], batch_size):
+        batch = list(zip(connections, range(batch_start, min(batch_start + batch_size, A.shape[0]), chunk_size)))
+        for connection, start_row in batch:
+            send_msg(connection, {
+                "algorithm": "baseline", "start_row": start_row,
+                "A_chunk": A[start_row:start_row + chunk_size].tolist(),
+                "B_matrix": B_matrix,
+            })
+        for connection, _ in batch:
+            task["results"].append(recv_msg(connection))
+    chunks = sorted(task["results"], key=lambda chunk: chunk["start_row"])
+    return [row for chunk in chunks for row in chunk["C_chunk"]]
+
+
+# One dispatcher reserves a group of workers for each complete request.
 def run_tcp_server():
-    host = '0.0.0.0'
-    port = 6000
-    server_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-    server_socket.bind((host, port))
-    server_socket.listen(5)
-    print(f"Master TCP dispatcher listening on port {port}...", flush=True)
+    with socket.socket() as server:
+        server.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        server.bind(("0.0.0.0", int(os.environ.get("MASTER_PORT", "6000"))))
+        server.listen()
+        print("Master TCP dispatcher listening...", flush=True)
+        while True:
+            connection, address = server.accept()
+            connections = [connection]
+            job = None
+            try:
+                connection.settimeout(SOCKET_TIMEOUT)
+                if recv_msg(connection) != "READY":
+                    continue
+                # An idle worker waits here; there is no successful-job sleep.
+                job = job_queue.get()
+                task = tasks_db[job["request_id"]]
+                A, B = job["A"], job["B"]
+                started = time.perf_counter()
 
-    while True:
-        client_socket, client_address = server_socket.accept()
-        try:
-            worker_signal = recv_msg(client_socket)
-            
-            if worker_signal == "READY":
-                if not job_queue.empty():
-                    job = job_queue.get()
-                    send_msg(client_socket, json.dumps(job))
-                    
-                    # Wait for worker computation
-                    result_data = recv_msg(client_socket)
-                    if result_data:
-                        result = json.loads(result_data)
-                        req_id = result['request_id']
-                        
-                        print(f"Master received Job {result['job_id']} for Request {req_id}", flush=True)
-                        tasks_db[req_id]["results"].append(result)
-                        
-                        # AGGREGATION LOGIC
-                        if len(tasks_db[req_id]["results"]) == tasks_db[req_id]["total_jobs"]:
-                            print(f"All jobs finished for {req_id}. Aggregating...", flush=True)
-                            
-                            # Sort the sub-matrices by their starting row to reconstruct correctly
-                            sorted_chunks = sorted(tasks_db[req_id]["results"], key=lambda x: x['start_row'])
-                            
-                            # Vertically stack the chunks to form the final matrix
-                            final_matrix = []
-                            for chunk in sorted_chunks:
-                                final_matrix.extend(chunk['C_chunk'])
-                                
-                            tasks_db[req_id]["final_matrix"] = final_matrix
-                            tasks_db[req_id]["status"] = "completed"
-                            print(f"Aggregation complete for Request {req_id}.", flush=True)
+                num_workers = int(os.environ.get("NUM_WORKERS", "4"))
+                rows, cols = get_grid_dims(num_workers, A.shape[0], B.shape[1])
+                count = rows * cols
+                connections, _ = collect_workers(server, connection, address[0], count)
+                if job["algorithm"] == "summa":
+                    task["final_matrix"] = run_summa_master(connections, A, B)
                 else:
-                    send_msg(client_socket, "EMPTY")
-        finally:
-            client_socket.close()
+                    task["final_matrix"] = run_baseline_master(connections, A, B, task)
+
+                for worker in connections:
+                    send_msg(worker, {"algorithm": "done"})
+                task["server_seconds"] = time.perf_counter() - started
+                task["status"] = "completed"
+            except (OSError, EOFError, ValueError, RuntimeError) as error:
+                if job is not None:
+                    tasks_db[job["request_id"]].update(status="failed", error=str(error))
+                print(f"Job failed: {error}", flush=True)
+            finally:
+                for worker in connections:
+                    worker.close()
+
 
 def run_master():
-    tcp_thread = threading.Thread(target=run_tcp_server, daemon=True)
-    tcp_thread.start()
-    app.run(host='0.0.0.0', port=5000, use_reloader=False) 
+    # This is the same TCP-server thread the original Flask app used.
+    threading.Thread(target=run_tcp_server, daemon=True).start()
+    app.run(host="0.0.0.0", port=int(os.environ.get("API_PORT", "5000")), use_reloader=False)
 
-# WORKER COMPUTATION
+
+# A connection stays open for all jobs in the current multiplication.
 def run_worker():
-    time.sleep(3)
-    master_host = os.environ.get('MASTER_HOST', 'master')
-    master_port = int(os.environ.get('MASTER_PORT', 6000))
-    worker_id = socket.gethostname()
-    
+    host = os.environ.get("MASTER_HOST", "master")
+    port = int(os.environ.get("MASTER_PORT", "6000"))
     while True:
-        client_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         try:
-            client_socket.connect((master_host, master_port))
-            send_msg(client_socket, "READY")
-            
-            response = recv_msg(client_socket)
-            if response and response != "EMPTY":
-                job = json.loads(response)
-                
-                # Computation Phase
-                A_chunk = np.array(job['A_chunk'])
-                B_matrix = np.array(job['B_matrix'])
-                C_chunk = np.dot(A_chunk, B_matrix)
-                
-                # Return Phase
-                result_payload = {
-                    "request_id": job['request_id'],
-                    "job_id": job['job_id'],
-                    "start_row": job['start_row'],
-                    "C_chunk": C_chunk.tolist()
-                }
-                send_msg(client_socket, json.dumps(result_payload))
-                
-        except ConnectionRefusedError:
-            pass 
-        finally:
-            client_socket.close()
-            
-        time.sleep(2) 
+            with socket.create_connection((host, port), SOCKET_TIMEOUT) as connection:
+                connection.settimeout(None)  # Idle workers wait for a request.
+                send_msg(connection, "READY")
+                while True:
+                    job = recv_msg(connection)
+                    connection.settimeout(SOCKET_TIMEOUT)
+                    if job["algorithm"] == "done":
+                        break
+                    if job["algorithm"] == "summa":
+                        run_summa_worker(connection, job)
+                    else:
+                        result = np.asarray(job["A_chunk"]) @ np.asarray(job["B_matrix"])
+                        send_msg(connection, {"start_row": job["start_row"], "C_chunk": result.tolist()})
+        except (OSError, EOFError, ValueError, RuntimeError) as error:
+            print(f"Worker: {error}", flush=True)
+            time.sleep(0.5)  # Retry only after a connection or job error.
+
 
 if __name__ == "__main__":
-    role = os.environ.get('NODE_ROLE', 'unassigned')
-    if role == 'master': run_master()
-    elif role == 'worker': run_worker()
+    role = os.environ.get("NODE_ROLE")
+    if role == "master":
+        run_master()
+    elif role == "worker":
+        run_worker()
+    else:
+        raise SystemExit("Set NODE_ROLE to master or worker.")
