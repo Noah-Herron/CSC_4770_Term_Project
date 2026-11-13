@@ -75,7 +75,7 @@ def wait_for_result(base_url, request_id, poll_interval):
 
 def main():
     parser = argparse.ArgumentParser(description="Send A @ B to the master node and time it")
-    parser.add_argument("--algorithm", default="baseline", choices=("baseline", "summa"))
+    parser.add_argument("--algorithm", default="baseline", choices=("baseline", "summa", "kstream"))
     parser.add_argument("--size", type=int, default=100,
                         help="Square size; fills in any of --a-rows/--a-cols/--b-cols not given")
     parser.add_argument("--a-rows", type=int, help="Rows of A (x1)")
@@ -83,7 +83,7 @@ def main():
     parser.add_argument("--b-cols", type=int, help="Columns of B (y2)")
     parser.add_argument("--workers", type=int,
                         help="How many worker containers to use (default: master's NUM_WORKERS)")
-    parser.add_argument("--seed", type=int, default=0, help="Same seed gives the same input for both algorithms")
+    parser.add_argument("--seed", type=int, default=0, help="Same seed gives the same input for all algorithms")
     parser.add_argument("--host", default="http://localhost:5000")
     parser.add_argument("--poll-interval", type=float, default=0.5)
     parser.add_argument("--verify", action="store_true", help="Check the result against NumPy")

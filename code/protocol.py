@@ -27,7 +27,7 @@ def recv_msg(sock):
 
 
 def collect_workers(server, first_connection, first_host, count):
-    """Both algorithms reserve the same number of workers for one request."""
+    """All algorithms reserve the same number of workers for one request."""
     connections, hosts = [first_connection], [first_host]
     server.settimeout(SOCKET_TIMEOUT)
     try:

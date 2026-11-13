@@ -15,7 +15,7 @@ CLIENT_SCRIPT = BASE_DIR / "client.py"
 # values = [100, 1000, 2500, 5000, 7500, 10000]
 MATRIX_VALUES = [25, 50, 75, 100]
 CONTAINER_COUNTS = [2, 4, 8, 16]
-ALGORITHMS = ["baseline", "summa"]
+ALGORITHMS = ["baseline", "summa", "kstream"]
 START_SEED = 42
 
 
@@ -112,7 +112,7 @@ def main():
     parser.add_argument("--runs", type=int, default=1,
                         help="How many experiments to run back to back (default 1)")
     parser.add_argument("--algorithm", choices=ALGORITHMS,
-                        help="Only run experiments for this algorithm (default: both)")
+                        help="Only run experiments for this algorithm (default: all)")
     parser.add_argument("--dry-run", action="store_true",
                         help="Only show which experiment would run next")
     args = parser.parse_args()

@@ -8,6 +8,7 @@ import uuid
 import numpy as np
 from flask import Flask, jsonify, request
 
+from kstream import run_kstream_master, run_kstream_worker
 from protocol import SOCKET_TIMEOUT, collect_workers, recv_msg, send_msg
 from summa import get_grid_dims, run_summa_master, run_summa_worker
 
@@ -41,8 +42,8 @@ def receive_matrices():
             raise ValueError("Matrices must contain finite numbers.")
 
         algorithm = data.get("algorithm", "baseline")
-        if algorithm not in ("baseline", "summa"):
-            raise ValueError("algorithm must be baseline or summa.")
+        if algorithm not in ("baseline", "summa", "kstream"):
+            raise ValueError("algorithm must be baseline, summa, or kstream.")
 
         num_workers = int(data.get("num_workers", DEFAULT_WORKERS))
         if num_workers < 1:
@@ -163,6 +164,8 @@ def run_job(server_socket, first_connection, first_host):
 
         if job["algorithm"] == "summa":
             final_matrix = run_summa_master(connections, A, B)
+        elif job["algorithm"] == "kstream":
+            final_matrix = run_kstream_master(connections, A, B)
         else:
             final_matrix = run_baseline_master(connections, A, B, task)
 
@@ -228,6 +231,8 @@ def run_worker():
                         break
                     if job["algorithm"] == "summa":
                         run_summa_worker(connection, job)
+                    elif job["algorithm"] == "kstream":
+                        run_kstream_worker(connection, job)
                     else:
                         result = np.asarray(job["A_chunk"]) @ np.asarray(job["B_matrix"])
                         send_msg(connection, {"start_row": job["start_row"], "C_chunk": result.tolist()})
