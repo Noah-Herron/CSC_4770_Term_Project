@@ -1,0 +1,58 @@
+services:
+  worker1:
+    build: .
+    command: ["--port", "9001"]
+    ports:
+      - "9001:9001"
+    networks:
+      - matrix-net
+
+  worker2:
+    build: .
+    command: ["--port", "9001"]
+    ports:
+      - "9002:9001"
+    networks:
+      - matrix-net
+
+  worker3:
+    build: .
+    command: ["--port", "9001"]
+    ports:
+      - "9003:9001"
+    networks:
+      - matrix-net
+
+  worker4:
+    build: .
+    command: ["--port", "9001"]
+    ports:
+      - "9004:9001"
+    networks:
+      - matrix-net
+
+  coordinator:
+    build: .
+    entrypoint: ["python3", "coordinator.py"]
+    # change M/K/N/tile-size here to test other matrix sizes
+    command:
+      - "--M=512"
+      - "--K=512"
+      - "--N=512"
+      - "--tile-size=128"
+      - "--workers"
+      - "worker1:9001"
+      - "worker2:9001"
+      - "worker3:9001"
+      - "worker4:9001"
+    depends_on:
+      - worker1
+      - worker2
+      - worker3
+      - worker4
+    networks:
+      - matrix-net
+
+networks:
+  matrix-net:
+    driver: bridge
