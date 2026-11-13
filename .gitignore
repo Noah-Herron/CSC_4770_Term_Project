@@ -1,2 +1,4 @@
 venv
 docs_for_me
+__pycache__/
+*.pyc

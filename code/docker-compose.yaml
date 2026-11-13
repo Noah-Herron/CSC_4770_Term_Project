@@ -6,6 +6,10 @@ services:
     container_name: master-node
     environment:
       - NODE_ROLE=master
+      - PEER_PORT=7000
+      - DATA_DIR=/app/data
+    volumes:
+      - ./data:/app/data  # calibration.json and bcast_table.json, shared with bcast_bench.py
     ports:
       - "5000:5000"  # External API port for user uploads
       - "6000:6000"  # Internal TCP socket port for worker communication
@@ -20,6 +24,7 @@ services:
       - NODE_ROLE=worker
       - MASTER_HOST=master
       - MASTER_PORT=6000
+      - PEER_PORT=7000  # workers forward broadcast data to each other on this port
     depends_on:
       - master  # Waits for the master to start before the worker
     deploy:
