@@ -7,6 +7,9 @@ import time
 import numpy as np
 import requests
 
+MATRIX_ALGORITHMS = ("baseline", "summa", "summa2d_flat", "summa2d_binomial",
+                     "summa2d_knomial", "summa2d_chain", "summa2d_auto")
+
 
 def read_json(response):
     """Return the response body, or raise with the server's error message."""
@@ -19,7 +22,7 @@ def read_json(response):
     return response.json()
 
 
-def generate_and_send(base_url, a_rows, a_cols, b_cols, algorithm, num_workers, seed):
+def generate_and_send(base_url, a_rows, a_cols, b_cols, algorithm, num_workers, seed, block_size=None):
     print(f"Generating A ({a_rows}x{a_cols}) and B ({a_cols}x{b_cols}) with seed {seed}...")
     rng = np.random.default_rng(seed)
 
@@ -28,6 +31,8 @@ def generate_and_send(base_url, a_rows, a_cols, b_cols, algorithm, num_workers, 
     B = rng.integers(1, 10, size=(a_cols, b_cols))
 
     payload = {"matrix_A": A.tolist(), "matrix_B": B.tolist(), "algorithm": algorithm}
+    if block_size is not None:
+        payload["block_size"] = block_size
     if num_workers is not None:
         payload["num_workers"] = num_workers
         print(f"Uploading to master node ({algorithm}, {num_workers} workers)...")
@@ -70,12 +75,17 @@ def wait_for_result(base_url, request_id, poll_interval):
         print("Server time unavailable; rebuild the containers to enable timing.")
     print(f"Wait and download time: {elapsed:.4f} seconds")
     print(f"Final matrix shape: {result.shape}")
-    return result, elapsed, server_seconds, data.get("workers_used", [])
+    if data.get("result"):
+        details = data["result"]
+        print(f"Grid {details['grid'][0]}x{details['grid'][1]}, tiles {details['block_size']}, "
+              f"{details['steps']} steps, broadcasts: {details['broadcasts_by_topology']}")
+    return result, elapsed, server_seconds, data.get("workers_used", []), data.get("result")
 
 
 def main():
     parser = argparse.ArgumentParser(description="Send A @ B to the master node and time it")
-    parser.add_argument("--algorithm", default="baseline", choices=("baseline", "summa"))
+    parser.add_argument("--algorithm", default="baseline", choices=MATRIX_ALGORITHMS)
+    parser.add_argument("--block-size", type=int, help="Tile size for summa2d_* (default: 256, smaller for small matrices)")
     parser.add_argument("--size", type=int, default=100,
                         help="Square size; fills in any of --a-rows/--a-cols/--b-cols not given")
     parser.add_argument("--a-rows", type=int, help="Rows of A (x1)")
@@ -101,10 +111,10 @@ def main():
     try:
         upload_start = time.perf_counter()
         request_id, A, B = generate_and_send(host, a_rows, a_cols, b_cols,
-                                             args.algorithm, args.workers, args.seed)
+                                             args.algorithm, args.workers, args.seed, args.block_size)
         upload_seconds = time.perf_counter() - upload_start
 
-        result, compute_seconds, server_seconds, workers_used = wait_for_result(
+        result, compute_seconds, server_seconds, workers_used, details = wait_for_result(
             host, request_id, args.poll_interval)
 
         verified = None
@@ -127,6 +137,7 @@ def main():
         "result_shape": list(result.shape),
         "workers_used": workers_used,
         "verified": verified,
+        "details": details,
     }))
 
 
