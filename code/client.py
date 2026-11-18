@@ -7,7 +7,7 @@ import time
 import numpy as np
 import requests
 
-MATRIX_ALGORITHMS = ("baseline", "summa", "summa2d_flat", "summa2d_binomial",
+MATRIX_ALGORITHMS = ("baseline", "summa", "kstream", "summa2d_flat", "summa2d_binomial",
                      "summa2d_knomial", "summa2d_chain", "summa2d_auto")
 
 
@@ -93,7 +93,7 @@ def main():
     parser.add_argument("--b-cols", type=int, help="Columns of B (y2)")
     parser.add_argument("--workers", type=int,
                         help="How many worker containers to use (default: master's NUM_WORKERS)")
-    parser.add_argument("--seed", type=int, default=0, help="Same seed gives the same input for both algorithms")
+    parser.add_argument("--seed", type=int, default=0, help="Same seed gives the same input for all algorithms")
     parser.add_argument("--host", default="http://localhost:5000")
     parser.add_argument("--poll-interval", type=float, default=0.5)
     parser.add_argument("--verify", action="store_true", help="Check the result against NumPy")

@@ -162,6 +162,7 @@ class BroadcastAlgorithm:
 ALGORITHMS = {algorithm.name: algorithm for algorithm in [
     MatrixAlgorithm("baseline"),
     MatrixAlgorithm("summa"),
+    MatrixAlgorithm("kstream"),
     # The paper's 2D SUMMA (block-cyclic, owner computes); only the broadcast shape differs
     MatrixAlgorithm("summa2d_flat"),       # point-to-point from the owner (the paper's baseline)
     MatrixAlgorithm("summa2d_binomial"),   # binomial-tree collectives (the paper's experiments)

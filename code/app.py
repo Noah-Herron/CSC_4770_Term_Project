@@ -12,6 +12,7 @@ from flask import Flask, jsonify, request
 
 from broadcast import (MAX_BROADCAST_BYTES, PEER_PORT, PeerListener, run_bcast_root,
                        run_bcast_worker, run_pingpong_root, run_pingpong_worker)
+from kstream import run_kstream_master, run_kstream_worker
 from protocol import SOCKET_TIMEOUT, collect_workers, recv_msg, send_msg
 from selector import DEFAULT_CALIBRATION, choose, default_segment_bytes, fit_calibration, load_json, predict
 from summa import get_grid_dims, run_summa_master, run_summa_worker
@@ -25,7 +26,7 @@ state_lock = threading.Lock()
 tasks_db = {}               # request_id -> tracking state
 job_queue = queue.Queue()   # requests waiting for the dispatcher, oldest first
 
-MATRIX_ALGORITHMS = ("baseline", "summa") + SUMMA2D_ALGORITHMS
+MATRIX_ALGORITHMS = ("baseline", "summa", "kstream") + SUMMA2D_ALGORITHMS
 DEFAULT_WORKERS = int(os.environ.get("NUM_WORKERS", "4"))
 BASELINE_CHUNK_ROWS = 2     # rows of A per baseline job
 WAIT_TIMEOUT_SECONDS = 60   # cap for ?wait=1 so a stuck job can't hang the request forever
@@ -330,6 +331,8 @@ def run_job(server_socket, first_connection, first_host):
                     num_workers=job["num_workers"])
             elif job["algorithm"] == "summa":
                 final_matrix, result = run_summa_master(connections, A, B), None
+            elif job["algorithm"] == "kstream":
+                final_matrix, result = run_kstream_master(connections, A, B), None
             else:
                 final_matrix, result = run_baseline_master(connections, A, B, task), None
             # Keep it as a NumPy array (8 bytes a number, not ~32 as Python lists) until fetched
@@ -401,6 +404,8 @@ def run_worker():
                         break
                     if job["algorithm"] == "summa":
                         run_summa_worker(connection, job)
+                    elif job["algorithm"] == "kstream":
+                        run_kstream_worker(connection, job)
                     elif job["algorithm"] == "summa2d":
                         run_summa2d_worker(connection, job, listener)
                     elif job["algorithm"] == "bcast":
