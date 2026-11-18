@@ -3,6 +3,8 @@
 import json
 import struct
 
+import numpy as np
+
 SOCKET_TIMEOUT = 120
 
 
@@ -49,3 +51,26 @@ def collect_workers(server, first_connection, first_host, count):
         raise
     finally:
         server.settimeout(None)
+
+
+def send_array(sock, array, **meta):
+    """Send a NumPy array as raw bytes (a JSON header, then the data). Much faster than tolist()."""
+    array = np.ascontiguousarray(array)
+    send_msg(sock, {"shape": list(array.shape), "dtype": array.dtype.str, **meta})
+    if array.size:  # an empty array (a worker that owns no tiles) is just the header
+        sock.sendall(memoryview(array).cast("B"))
+
+
+def recv_array(sock):
+    """Receive an array sent by send_array. Returns (array, header)."""
+    header = recv_msg(sock)
+    array = np.empty(header["shape"], dtype=np.dtype(header["dtype"]))
+    if array.size == 0:
+        return array, header
+    view = memoryview(array).cast("B")
+    while len(view):
+        received = sock.recv_into(view)
+        if received == 0:
+            raise EOFError("Connection closed in the middle of an array.")
+        view = view[received:]
+    return array, header
