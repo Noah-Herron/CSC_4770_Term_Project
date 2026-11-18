@@ -1,6 +1,6 @@
 # Distributed matrix multiplication
 
-Original master/worker structure, with SUMMA and K-stream (Stream-K) algorithms.
+Original master/worker structure, with SUMMA, K-stream (Stream-K), and SUMMA2D broadcast variants.
 
 From the repository root, start the master and the configured worker pool:
 
@@ -27,6 +27,7 @@ The client accepts `--algorithm` (default baseline), `--size` (default 100), and
 * `code/protocol.py`: send and receive length-prefixed JSON over TCP.
 * `code/summa.py`: the SUMMA coordinator and worker functions.
 * `code/kstream.py`: the Stream-K tile/K work splitter, coordinator, and worker function.
+* `code/summa2d.py`: main's SUMMA2D variants (`summa2d_flat`, `summa2d_binomial`, `summa2d_knomial`, `summa2d_chain`, and `summa2d_auto`).
 
 For **baseline**, the master divides A into two-row jobs, each paired with all of B. It reserves the same worker pool used by SUMMA and keeps their TCP connections open for the whole request. It sends one row job to each worker before collecting the batch of results, then repeats with the next rows. The worker processes compute independently; the master needs no extra threads. When all row jobs finish, it sorts and joins the output chunks. Workers do not sleep or reconnect between row jobs. The 0.5-second retry delay applies only after an error.
 
@@ -52,11 +53,11 @@ This removes the artificial worker pauses and serial baseline dispatch from the 
 
 ## API and tests
 
-`POST /multiply` accepts `matrix_A`, `matrix_B`, and optional `algorithm` (`baseline`, `summa`, or `kstream`; default `baseline`) and `num_workers`. `GET /result/<request_id>` returns progress, a completed matrix, or an error. Adding `?wait=1` keeps the HTTP request open until completion; this is what the client uses. Requests and results are held in memory. Input and aggregation still share the original master container.
+`POST /multiply` accepts `matrix_A`, `matrix_B`, and optional `algorithm` (`baseline`, `summa`, `kstream`, or any `summa2d_*` variant above; default `baseline`) and `num_workers`. `GET /result/<request_id>` returns progress, a completed matrix, or an error. Adding `?wait=1` keeps the HTTP request open until completion; this is what the client uses. As on main, fetching a completed matrix releases it from server memory, so clients should retain the downloaded result. Requests are held in memory. Input and aggregation still share the original master container.
 
 By default, all algorithms reserve up to `NUM_WORKERS=4` running workers (a 2x2 grid for SUMMA); small output dimensions can shrink the shared pool. The request times out if enough workers are unavailable. The current Compose file starts 16 workers; select a count with the client's `--workers` option or set the master's `NUM_WORKERS` default. Rebuild the Docker images after adding K-stream.
 
-The experiment handler also accepts `--algorithm kstream` and includes it when scheduling all algorithms. It adds missing K-stream combinations when loading tracking; existing run counts are preserved.
+The experiment handler also accepts `--algorithm kstream` and includes it when scheduling all algorithms. It uses main's registry, family filters, and run rotation. It adds missing K-stream combinations when loading tracking; existing run counts are preserved. Broadcast experiments, calibration, and the cost-model selector retain main's existing behavior.
 
 Run the checks with:
 
